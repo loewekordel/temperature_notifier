@@ -59,7 +59,7 @@ def should_arm(
 
     # Check temperature delta arming
     if config.arming.temperature_delta is not None:
-        arm_by_temp = outdoor_temp >= indoor_temp + config.arming.temperature_delta
+        arm_by_temp = indoor_temp - outdoor_temp >= config.arming.temperature_delta
 
     # Check time arming
     if config.arming.time is not None:
