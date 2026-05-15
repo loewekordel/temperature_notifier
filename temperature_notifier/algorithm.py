@@ -5,7 +5,6 @@ and sending notifications based on the configured thresholds and conditions.
 
 import logging
 from datetime import datetime
-from datetime import timedelta
 
 
 from temperature_notifier.configuration import Configuration
@@ -66,12 +65,17 @@ def should_arm(
         current_time = current_datetime.time()
         arm_by_time = current_time >= config.arming.time
 
-    # Arm if either condition is met, and log the reason
-    if not state_manager.state.armed and (arm_by_temp or arm_by_time):
+    # When both conditions are configured, require both (AND) so that time acts as a
+    # hard gate — temperature delta alone cannot arm before the configured time.
+    # When only one condition is configured, that single condition is sufficient.
+    both_configured = config.arming.temperature_delta is not None and config.arming.time is not None
+    should_arm_now = (arm_by_temp and arm_by_time) if both_configured else (arm_by_temp or arm_by_time)
+
+    if not state_manager.state.armed and should_arm_now:
         reasons = []
         if arm_by_temp:
             reasons.append(
-                f"outdoor_temp ({outdoor_temp}°C) >= indoor_temp ({indoor_temp}°C) + temperature_delta ({config.arming.temperature_delta}°C)"
+                f"indoor_temp ({indoor_temp}°C) - outdoor_temp ({outdoor_temp}°C) >= temperature_delta ({config.arming.temperature_delta}°C)"
             )
         if arm_by_time:
             reasons.append(
@@ -117,11 +121,12 @@ def compare_temperatures(
     logger.info("Checking for new day...")
     if state_manager.is_new_day(current_datetime):
         logger.info("New day detected. Resetting state.")
-        state_manager.reset_notification_time()
-        state_manager.set_armed(False)
+        state_manager.reset_daily_state()
+        state_manager.state.last_run_date = current_datetime.date()
         state_manager.save_state()
     else:
         logger.info("No new day detected. Continuing with current state.")
+        state_manager.state.last_run_date = current_datetime.date()
 
     # Get temperatures for indoor and outdoor
     logger.info("Fetching indoor and outdoor temperatures from InfluxDB...")
@@ -168,27 +173,6 @@ def compare_temperatures(
         state_manager.set_armed(True)
         state_manager.save_state()
 
-    # # Check for significant temperature rise
-    # logger.info("Checking for significant temperature rise...")
-    # if is_significant_rise(state_manager, config):
-    #     # Check if the last significant rise notification is still in the rolling window
-    #     if is_within_window(state_manager):
-    #         logger.info(
-    #             (
-    #                 "Significant temperature rise already notified and still within the rolling window. "
-    #                 "No notification sent."
-    #             )
-    #         )
-    #         return
-
-    #     logger.info(
-    #         "Significant temperature rise detected. Resetting last notification time."
-    #     )
-    #     state_manager.state.last_significant_rise_time = current_datetime
-    #     state_manager.reset_notification_time()
-    # else:
-    #     logger.info("No significant temperature rise detected.")
-
     # Check for significant rapid change event
     logger.info("Checking for a rapid change event...")
     if state_manager.has_rolling_window_rapid_change_event(
@@ -234,12 +218,6 @@ def compare_temperatures(
             return
     else:
         logger.info("No notification has been sent today. Skipping cooldown and rise checks.")
-        
-    # Check if a notification has already been sent today
-    # logger.info("Checking if notification has already been sent today...")
-    # if is_notification_sent_today(state_manager, current_datetime):
-    #     logger.info("Notification already sent today. No notification sent.")
-    #     return
 
     if not state_manager.is_armed():
         logger.info("Notifier is not armed. No notification sent.")

@@ -111,41 +111,6 @@ class RollingWindow:
 
         return rise >= rise_threshold and drop >= drop_threshold
 
-    def has_significant_rise(self, threshold: float) -> bool:
-        """
-        Checks if there is a significant rise in temperature within the rolling window.
-
-        :param threshold: The threshold for significant rise.
-        :return: True if a significant rise is detected, False otherwise.
-        """
-        if not self.entries:
-            return False
-        # Not enough entries to compare
-        if len(self.entries) < 2:
-            return False
-
-        logger.info(
-            "Rolling window entries:\n%s",
-            "\n".join(
-                f"         {entry.time.strftime('%Y-%m-%d %H:%M:%S')} | {entry.temperature:.2f}°C"
-                for entry in self.entries
-            ),
-        )
-        # Find the maximum value and its index
-        max_index, max_entry = max(
-            enumerate(self.entries), key=lambda x: x[1].temperature
-        )
-        max_value = max_entry.temperature  # Extract the temperature value
-
-        # Loop backward to find the minimum value before the maximum
-        min_value = max_value  # Initialize to max_value
-        for i in range(max_index, -1, -1):
-            min_value = min(min_value, self.entries[i].temperature)
-        logger.info(f"Max value: {max_value}, Min value: {min_value}")
-
-        # Calculate the difference and check if it exceeds the threshold
-        return (max_value - min_value) >= threshold
-
     def is_within_window(self, timestamp: datetime) -> bool:
         """
         Checks if a given timestamp is within the time span of the rolling window.

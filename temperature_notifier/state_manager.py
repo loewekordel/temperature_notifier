@@ -7,6 +7,7 @@ import logging
 from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import field
+from datetime import date
 from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
@@ -50,6 +51,7 @@ class State:
 
     last_notification_time: datetime = None
     last_significant_rise_time: datetime = None
+    last_run_date: date = None
     armed: bool = False
     rolling_window: RollingWindow | None = None
     temps_since_last_notification: list[float] = field(default_factory=list)
@@ -96,6 +98,8 @@ class StateManager:
                     self.state.last_significant_rise_time = deserialize_datetime(
                         data.get("last_significant_rise_time")
                     )
+                    last_run_date_str = data.get("last_run_date")
+                    self.state.last_run_date = date.fromisoformat(last_run_date_str) if last_run_date_str else None
                     self.state.armed = data.get("armed", False)
                     self.state.rolling_window = RollingWindow.from_dict(
                         data.get("rolling_window", []),
@@ -124,6 +128,9 @@ class StateManager:
             state_to_save["last_significant_rise_time"] = serialize_datetime(
                 state_to_save["last_significant_rise_time"]
             )
+            state_to_save["last_run_date"] = (
+                self.state.last_run_date.isoformat() if self.state.last_run_date else None
+            )
             # Include the armed state
             state_to_save["armed"] = self.state.armed
             # Serialize the rolling window entries
@@ -147,15 +154,13 @@ class StateManager:
 
     def is_new_day(self, current_datetime: datetime) -> bool:
         """
-        Checks if a new day has started based on the last notification time.
+        Checks if a new day has started based on the last run date.
 
-        :param current_datetime: The current time to compare against the last notification time.
+        :param current_datetime: The current time to compare against the last run date.
         :return: True if a new day has started, False otherwise.
         """
-        if self.state.last_notification_time:
-            last_notification_date = self.state.last_notification_time.date()
-            if last_notification_date != current_datetime.date():
-                return True
+        if self.state.last_run_date is not None:
+            return self.state.last_run_date != current_datetime.date()
         return False
 
     def is_notification_sent_today(
@@ -197,6 +202,17 @@ class StateManager:
         self.state.last_notification_time = None
         logger.info("Notification time reset.")
 
+    def reset_daily_state(self) -> None:
+        """
+        Resets all daily state: armed flag, notification times, and temps buffer.
+        Called at the start of each new day.
+        """
+        self.state.last_notification_time = None
+        self.state.last_significant_rise_time = None
+        self.state.armed = False
+        self.state.temps_since_last_notification = []
+        logger.info("Daily state reset: armed=False, notification times cleared, temps cleared.")
+
     def is_notification_in_cooldown(
         self, current_datetime: datetime, cooldown_minutes: int
     ) -> bool:
@@ -218,18 +234,6 @@ class StateManager:
             return True
         else:
             return False
-
-    # def is_significant_rise(
-    #     self,
-    #     temperature_rise: float,
-    # ) -> bool:
-    #     """
-    #     Checks if there is a significant temperature rise based on the rolling window.
-
-    #     :param temperature_rise: The temperature rise to check against the rolling window.
-    #     :return: True if there is a significant rise, False otherwise.
-    #     """
-    #     return self.state.rolling_window.has_significant_rise(temperature_rise)
 
     def has_rolling_window_rapid_change_event(
         self,
