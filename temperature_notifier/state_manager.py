@@ -45,12 +45,14 @@ class State:
 
     :param last_notification_time: The time of the last notification sent.
     :param last_significant_rise_time: The time of the last notification sent for a significant temperature rise.
+    :param last_stale_warning_time: The time of the last stale-data warning notification sent.
     :param armed: Whether the temperature notifier is armed to send notifications.
     :param rolling_window: Serialized representation of the rolling window.
     """
 
     last_notification_time: datetime = None
     last_significant_rise_time: datetime = None
+    last_stale_warning_time: datetime = None
     last_run_date: date = None
     armed: bool = False
     rolling_window: RollingWindow | None = None
@@ -98,6 +100,9 @@ class StateManager:
                     self.state.last_significant_rise_time = deserialize_datetime(
                         data.get("last_significant_rise_time")
                     )
+                    self.state.last_stale_warning_time = deserialize_datetime(
+                        data.get("last_stale_warning_time")
+                    )
                     last_run_date_str = data.get("last_run_date")
                     self.state.last_run_date = date.fromisoformat(last_run_date_str) if last_run_date_str else None
                     self.state.armed = data.get("armed", False)
@@ -127,6 +132,9 @@ class StateManager:
             )
             state_to_save["last_significant_rise_time"] = serialize_datetime(
                 state_to_save["last_significant_rise_time"]
+            )
+            state_to_save["last_stale_warning_time"] = serialize_datetime(
+                self.state.last_stale_warning_time
             )
             state_to_save["last_run_date"] = (
                 self.state.last_run_date.isoformat() if self.state.last_run_date else None
@@ -209,6 +217,7 @@ class StateManager:
         """
         self.state.last_notification_time = None
         self.state.last_significant_rise_time = None
+        self.state.last_stale_warning_time = None
         self.state.armed = False
         self.state.temps_since_last_notification = []
         logger.info("Daily state reset: armed=False, notification times cleared, temps cleared.")
@@ -270,6 +279,17 @@ class StateManager:
         return self.state.rolling_window.is_within_window(
             self.state.last_significant_rise_time
         )
+
+    def is_stale_warning_sent_today(self, current_datetime: datetime) -> bool:
+        """
+        Checks if a stale-data warning has already been sent today.
+
+        :param current_datetime: The current datetime.
+        :return: True if a stale warning was already sent today, False otherwise.
+        """
+        if self.state.last_stale_warning_time is None:
+            return False
+        return self.state.last_stale_warning_time.date() == current_datetime.date()
 
     def has_min_rise_since_last_notification(self, min_rise: float) -> bool:
         """

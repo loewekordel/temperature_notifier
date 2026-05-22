@@ -130,13 +130,36 @@ def compare_temperatures(
 
     # Get temperatures for indoor and outdoor
     logger.info("Fetching indoor and outdoor temperatures from InfluxDB...")
-    indoor_temp = influxdb_service.get_last_value(config.influxdb.measurements.indoor)
-    outdoor_temp = influxdb_service.get_last_value(config.influxdb.measurements.outdoor)
+    max_age = config.influxdb.max_data_age_minutes
+    indoor_temp = influxdb_service.get_last_value(config.influxdb.measurements.indoor, max_age_minutes=max_age)
+    outdoor_temp = influxdb_service.get_last_value(config.influxdb.measurements.outdoor, max_age_minutes=max_age)
 
     if indoor_temp is None or outdoor_temp is None:
-        logger.warning(
-            f"Missing temperature data: indoor_temp={indoor_temp}, outdoor_temp={outdoor_temp}"
-        )
+        # check which sensors are stale
+        stale_sensors = []
+        if indoor_temp is None:
+            stale_sensors.append(f"indoor ({config.influxdb.measurements.indoor.name})")
+        if outdoor_temp is None:
+            stale_sensors.append(f"outdoor ({config.influxdb.measurements.outdoor.name})")
+        stale_msg = ", ".join(stale_sensors)
+        logger.warning(f"Stale or missing data for sensors: {stale_msg}")
+
+        # Check if a stale data warning has already been sent today or if it's before the arming time
+        if state_manager.is_stale_warning_sent_today(current_datetime):
+            logger.info("Stale data warning already sent today, skipping notification.")
+        elif config.arming.time is not None and current_datetime.time() < config.arming.time:
+            logger.info(
+                f"Stale data detected but before arming time ({config.arming.time.strftime('%H:%M')}), skipping notification."
+            )
+        else:
+            logger.info("Sending stale data warning notification.")
+            for notifier in notifiers:
+                notifier.send_notification(
+                    "Sensor Data Warning",
+                    f"No recent data (>{max_age} min) for sensor(s): {stale_msg}. Temperature monitoring paused.",
+                )
+            state_manager.state.last_stale_warning_time = current_datetime
+            state_manager.save_state()
         return
 
     logger.info(

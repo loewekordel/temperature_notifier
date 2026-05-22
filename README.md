@@ -7,6 +7,7 @@ The `temperature_notifier` module monitors indoor and outdoor temperatures using
 - Monitors indoor and outdoor temperatures from an InfluxDB database.
 - Sends notifications using one or more notifier services (SimplePush, email, etc.).
 - Configurable thresholds for temperature alerts, major temperature rises, and arming delta.
+- Detects stale sensor data and sends a once-per-day warning notification when a sensor stops reporting.
 - Logs activity with rotating log files.
 - Maintains application state in a JSON file for persistent tracking.
 
@@ -33,11 +34,12 @@ Create a `config.yaml` file in the same directory as the script. Below is an exa
 influxdb:
   host: "localhost"
   port: 8086
-  database: "environmentMonitoring"
+  database: "environment"
+  max_data_age_minutes: 30        # Data older than this is considered stale
   measurements:
     indoor:
-      name: "LivingRoom"
-      field: "tCels"
+      name: "indoor"
+      field: "temperature"
     outdoor:
       name: "outdoor"
       field: "temperature"
@@ -71,8 +73,9 @@ arming:
 
 ### Temperature Comparison and Notification Logic
 
-- **Daily Reset:** At the start of a new day, the notification flag and arming state are reset.
-- **Temperature Fetch:** The latest indoor and outdoor temperatures are read from InfluxDB.
+- **Daily Reset:** At the start of a new day, the notification flag, arming state, and stale warning flag are reset.
+- **Temperature Fetch:** The latest indoor and outdoor temperatures are read from InfluxDB. Any data point older than `max_data_age_minutes` is treated as missing.
+- **Stale Data Warning:** If one or both sensors have no recent data, a "Sensor Data Warning" notification is sent (at most once per day, and not before the configured `arming.time`). Temperature monitoring is skipped for that run.
 - **Rolling Window Update:** The outdoor temperature is added to a rolling window of length `window_minutes` for trend analysis and rapid change detection.
 - **Indoor Threshold Check:** If the indoor temperature is below `min_indoor_temperature`, no notification is sent.
 - **Arming Logic:** The notifier "arms" itself only if the outdoor temperature is at least `temperature_delta` °C higher than the indoor temperature or after the configured arming time.

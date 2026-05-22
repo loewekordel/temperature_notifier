@@ -34,20 +34,27 @@ class InfluxDBService:
         """
         self.client.switch_database(database)
 
-    def get_last_value(self, measurement: MeasurementConfiguration) -> float | None:
+    def get_last_value(
+        self, measurement: MeasurementConfiguration, max_age_minutes: int | None = None
+    ) -> float | None:
         """
-        Queries the last value value from a given measurement.
+        Queries the last value from a given measurement.
 
         :param measurement: The measurement configuration containing the name and field.
-        :return: The last value from the specified measurement.
+        :param max_age_minutes: If set, only returns data newer than this many minutes.
+                                Returns None (and logs a warning) when data is older.
+        :return: The last value from the specified measurement, or None if unavailable/stale.
         """
         try:
             query = f'SELECT LAST("{measurement.field}") FROM "{measurement.name}"'
+            if max_age_minutes is not None:
+                query += f" WHERE time > now() - {max_age_minutes}m"
             result = self.client.query(query)
             points = list(result.get_points())
             if not points:
                 logger.warning(
-                    f"No data found for measurement '{measurement.name}' in field '{measurement.field}'."
+                    f"No recent data for measurement '{measurement.name}' field '{measurement.field}'"
+                    + (f" (within last {max_age_minutes} min)" if max_age_minutes else "") + "."
                 )
                 return None
             return points[0]["last"]

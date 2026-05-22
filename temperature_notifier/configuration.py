@@ -35,6 +35,7 @@ INFLUXDB_SCHEMA = {
         "host": {"type": "string"},
         "port": {"type": "integer"},
         "database": {"type": "string"},
+        "max_data_age_minutes": {"type": "integer", "minimum": 1},
         "measurements": {
             "type": "object",
             "properties": {
@@ -45,7 +46,7 @@ INFLUXDB_SCHEMA = {
             "additionalProperties": False,
         },
     },
-    "required": ["host", "port", "database", "measurements"],
+    "required": ["host", "port", "database", "max_data_age_minutes", "measurements"],
     "additionalProperties": False,
 }
 
@@ -164,13 +165,15 @@ class InfluxDBConfiguration:
     :param host: The InfluxDB host.
     :param port: The InfluxDB port.
     :param database: The InfluxDB database name.
+    :param max_data_age_minutes: Maximum age of a data point before it is considered stale.
     :param measurements: Configuration for measurements.
     """
 
     host: str
     port: int
     database: str
-    measurements: MeasurementsConfiguration  # Use the new dataclass
+    max_data_age_minutes: int
+    measurements: MeasurementsConfiguration
 
 
 # Mapping of notifier types to their configuration classes
@@ -235,6 +238,7 @@ class NotificationConfiguration:
     :param min_indoor_temperature: The minimum indoor temperature to trigger notifications.
     :param rapid_change_event: Configuration for rapid change events.
     :param reenable: Configuration for re-enabling notifications after cooldown.
+    :param stale_warning_cooldown_minutes: Cooldown between stale-data warning notifications.
     """
 
     min_indoor_temperature: float
@@ -367,6 +371,7 @@ def load_configuration_from_file(config_file: Path) -> Configuration:
                 host=data["influxdb"]["host"],
                 port=data["influxdb"]["port"],
                 database=data["influxdb"]["database"],
+                max_data_age_minutes=data["influxdb"]["max_data_age_minutes"],
                 measurements=measurements,
             ),
             notifiers=notifiers,
