@@ -1,4 +1,0 @@
-influxdb
-jsonschema
-pyyaml
-simplepush

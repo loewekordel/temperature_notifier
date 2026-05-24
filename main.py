@@ -1,46 +1,39 @@
-"""
-This script monitors indoor and outdoor temperatures using InfluxDB.
-It sends notifications if the outdoor temperature is lower than the indoor temperature
-and the indoor temperature exceeds a specified threshold.
-It uses the SimplePush service for notifications.
+"""Temperature notifier script.
+
+Monitors indoor and outdoor temperatures via InfluxDB and sends notifications
+when the outdoor temperature drops below the indoor temperature threshold.
 """
 
 import argparse
 import logging
+from collections.abc import Sequence
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
-from typing import Sequence
 
 from temperature_notifier.algorithm import compare_temperatures
-from temperature_notifier.configuration import Configuration
-from temperature_notifier.configuration import ConfigurationError
-from temperature_notifier.configuration import load_configuration_from_file
-from temperature_notifier.configuration import SimplePushConfiguration
-from temperature_notifier.influxdb_service import InfluxDBService
-from temperature_notifier.influxdb_service import InfluxDBServiceError
-from temperature_notifier.notifiers import SimplePushNotifier
-from temperature_notifier.state_manager import StateManager
-from temperature_notifier.state_manager import StateManagerError
-from temperature_notifier.notifiers import Notifier
-from temperature_notifier.notifiers import NotifierError
+from temperature_notifier.configuration import Configuration, ConfigurationError, load_configuration_from_file
+from temperature_notifier.influxdb_service import InfluxDBService, InfluxDBServiceError
+from temperature_notifier.notifiers import Notifier, NotifierError
+from temperature_notifier.state_manager import StateManager, StateManagerError
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version
+    __version__ = version("temperature-notifier")
+except PackageNotFoundError:
+    import tomllib
+    with open(Path(__file__).with_name("pyproject.toml"), "rb") as _f:
+        __version__ = tomllib.load(_f)["project"]["version"]
 
 logger = logging.getLogger(__name__)
 
 SCRIPT_NAME = "temperature_notifier"
-STATE_FILE = Path("notifier_state.json")
-LOG_FILE_SIZE = 100 * 1024  # 2 KB
+STATE_FILE = Path(__file__).parent / "notifier_state.json"
+LOG_FILE_SIZE = 100 * 1024  # 100 KB
 LOG_BACKUP_COUNT = 10  # Number of backup log files to keep
-NOTIFIER_CONFIG_TO_CLASS = {
-    SimplePushConfiguration: SimplePushNotifier,
-}
 
 
 def configure_logging(log_name: str, debug: bool = False) -> None:
-    """
-    Configures logging to use a rotating file handler.
+    """Configures logging to use a rotating file handler.
 
     :param log_name: The name of the log file.
     """
@@ -73,9 +66,8 @@ def configure_logging(log_name: str, debug: bool = False) -> None:
     )
 
 
-def main(args: Optional[Sequence[str]] = None) -> int:
-    """
-    Main function.
+def main(args: Sequence[str] | None = None) -> int:
+    """Main function.
 
     :return: Exit code, 0 for success, 1 for failure.
     """
@@ -95,14 +87,14 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Enable debug logging.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(args)
 
     # Initialize logging
     configure_logging(SCRIPT_NAME, args.debug)
 
     # Load configuration
     try:
-        config: Configuration = load_configuration_from_file("config.yaml")
+        config: Configuration = load_configuration_from_file(Path(__file__).parent / "config.yaml")
     except ConfigurationError as e:
         logger.error(f"Failed to load configuration: {e}")
         return 1
@@ -123,15 +115,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         )
 
         # Initialize the Notifier
-        notifiers: list[Notifier] = []
-        for notifier_cfg in config.notifiers:
-            notifier_class = NOTIFIER_CONFIG_TO_CLASS.get(type(notifier_cfg))
-            if not notifier_class:
-                logger.error(
-                    f"No notifier class registered for config type '{type(notifier_cfg).__name__}'"
-                )
-                continue
-            notifiers.append(notifier_class(**notifier_cfg.__dict__))
+        notifiers: list[Notifier] = [cfg.create_notifier() for cfg in config.notifiers]
 
         # Perform the temperature comparison
         compare_temperatures(
@@ -140,17 +124,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
             state_manager=state_manager,
             notifiers=notifiers,
         )
-    except ConfigurationError as e:
-        logger.error(f"Configuration error: {e}")
-        return 1
-    except InfluxDBServiceError as e:
-        logger.error(f"InfluxDB error: {e}")
-        return 1
-    except NotifierError as e:
-        logger.error(f"Notifier error: {e}")
-        return 1
-    except StateManagerError as e:
-        logger.error(f"State manager error: {e}")
+    except (ConfigurationError, InfluxDBServiceError, NotifierError, StateManagerError) as e:
+        logger.error(str(e))
         return 1
     except Exception as e:
         logger.exception(f"Unexpected error: {e}")

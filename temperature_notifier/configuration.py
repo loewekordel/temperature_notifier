@@ -1,22 +1,21 @@
-"""
-Configuration module for the temperature notifier application.
-This module defines the configuration classes and functions to load
-the configuration from a YAML file.
-"""
+"""Configuration module for the temperature notifier application.
 
-from __future__ import annotations
+Defines the configuration classes and functions to load the configuration from a YAML file.
+"""
 
 import logging
-from datetime import time
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
-from typing import Optional
-from typing import Union
 
 import jsonschema
 import yaml
 
+from temperature_notifier.notifiers import Notifier, SimplePushNotifier
+
 logger = logging.getLogger(__name__)
+
+_MAX_PORT = 65535
 
 # Define the configuration schema using JSON Schem
 TEMPERATURE_SCHEMA = {
@@ -76,6 +75,7 @@ RAPID_CHANGE_EVENT_SCHEMA = {
         "rise": {"type": "number"},
         "drop": {"type": "number"},
         "window_minutes": {"type": "number"},
+        "min_peak_temperature": {"type": "number"},
     },
     "required": ["rise", "drop", "window_minutes"],
     "additionalProperties": False,
@@ -134,11 +134,10 @@ class ConfigurationError(Exception):
 
 @dataclass
 class MeasurementConfiguration:
-    """
-    Configuration for a measurement.
+    """Configuration for a measurement.
 
-    :param name: The name of the measurement.
-    :param field: The field name in the measurement.
+    :var name: The name of the measurement.
+    :var field: The field name in the measurement.
     """
 
     name: str
@@ -147,10 +146,10 @@ class MeasurementConfiguration:
 
 @dataclass
 class MeasurementsConfiguration:
-    """
-    Configuration for measurements.
-    :param indoor: Configuration for indoor measurement.
-    :param outdoor: Configuration for outdoor measurement.
+    """Configuration for measurements.
+
+    :var indoor: Configuration for indoor measurement.
+    :var outdoor: Configuration for outdoor measurement.
     """
 
     indoor: MeasurementConfiguration
@@ -159,14 +158,13 @@ class MeasurementsConfiguration:
 
 @dataclass
 class InfluxDBConfiguration:
-    """
-    Configuration for InfluxDB connection.
+    """Configuration for InfluxDB connection.
 
-    :param host: The InfluxDB host.
-    :param port: The InfluxDB port.
-    :param database: The InfluxDB database name.
-    :param max_data_age_minutes: Maximum age of a data point before it is considered stale.
-    :param measurements: Configuration for measurements.
+    :var host: The InfluxDB host.
+    :var port: The InfluxDB port.
+    :var database: The InfluxDB database name.
+    :var max_data_age_minutes: Maximum age of a data point before it is considered stale.
+    :var measurements: Configuration for measurements.
     """
 
     host: str
@@ -177,22 +175,20 @@ class InfluxDBConfiguration:
 
 
 # Mapping of notifier types to their configuration classes
-notifier_class_lookup: dict[str, NotifierConfiguration] = {}
+notifier_class_lookup: dict[str, type] = {}
 
 
 def register_notifier_config(type_value: str):
-    """
-    Decorator to register a notifier configuration class.
+    """Decorator to register a notifier configuration class.
 
-    :param type_value: The type value for the notifier, used as a key in the lookup.
+    :var type_value: The type value for the notifier, used as a key in the lookup.
     :return: The decorator function.
     """
 
     def decorator(cls):
-        """
-        Decorator function to register the class.
-        :param cls: The class to register
+        """Decorator function to register the class.
 
+        :param cls: The class to register
         :return: The class itself.
         """
         notifier_class_lookup[type_value.lower()] = cls
@@ -204,41 +200,62 @@ def register_notifier_config(type_value: str):
 @register_notifier_config("simplepush")
 @dataclass
 class SimplePushConfiguration:
-    """
-    Configuration for SimplePush.
+    """Configuration for SimplePush.
 
-    :param key: The SimplePush API key.
+    :var key: The SimplePush API key.
     """
 
     key: str
 
+    def create_notifier(self) -> Notifier:
+        """Creates a SimplePushNotifier instance based on the configuration.
 
-# NotifierConfiguration is a union of all notifier configurations
-NotifierConfiguration = Union[SimplePushConfiguration]
+        :return: An instance of SimplePushNotifier.
+        """
+        return SimplePushNotifier(key=self.key)
+
+
+# Extend as Union[SimplePushConfiguration, ...] when more notifier types are added
+NotifierConfiguration = SimplePushConfiguration
 
 
 @dataclass
 class RapidChangeEventConfiguration:
+    """Configuration for rapid change event.
+
+    :var rise: The temperature rise threshold to trigger a rapid change event notification.
+    :var drop: The temperature drop threshold to trigger a rapid change event notification.
+    :var window_minutes: The time window in minutes to consider for rapid change events.
+    :var min_peak_temperature: Minimum outdoor peak temperature (°C) required for the event
+        to fire. When omitted, the current indoor temperature is used as the threshold.
+    """
+
     rise: float
     drop: float
     window_minutes: int
+    min_peak_temperature: float | None = None
 
 
 @dataclass
 class ReenableConfiguration:
+    """Configuration for re-enabling notifications after cooldown.
+
+    :var cooldown_minutes: The time to wait before re-enabling notifications.
+    :var min_rise_between_notifications: The minimum temperature rise required to trigger a notification.
+    """
+
     cooldown_minutes: int
     min_rise_between_notifications: float
 
 
 @dataclass
 class NotificationConfiguration:
-    """
-    Configuration for notifications.
+    """Configuration for notifications.
 
-    :param min_indoor_temperature: The minimum indoor temperature to trigger notifications.
-    :param rapid_change_event: Configuration for rapid change events.
-    :param reenable: Configuration for re-enabling notifications after cooldown.
-    :param stale_warning_cooldown_minutes: Cooldown between stale-data warning notifications.
+    :var min_indoor_temperature: The minimum indoor temperature to trigger notifications.
+    :var rapid_change_event: Configuration for rapid change events.
+    :var reenable: Configuration for re-enabling notifications after cooldown.
+    :var stale_warning_cooldown_minutes: Cooldown between stale-data warning notifications.
     """
 
     min_indoor_temperature: float
@@ -248,26 +265,24 @@ class NotificationConfiguration:
 
 @dataclass
 class ArmingConfiguration:
-    """
-    Configuration for arming the notifier.
+    """Configuration for arming the notifier.
 
-    :param temperature_delta: The temperature difference required to arm the notifier.
-    :param time: The time of day to arm the notifier (optional).
+    :var temperature_delta: The temperature difference required to arm the notifier.
+    :var arming_time: The time of day to arm the notifier (optional).
     """
 
-    temperature_delta: Optional[float] = None
-    time: Optional[time] = None
+    temperature_delta: float | None = None
+    arming_time: time | None = None
 
 
 @dataclass
 class Configuration:
-    """
-    Top level configuration.
+    """Top level configuration.
 
-    :param influxdb: InfluxDB configuration object.
-    :param notifiers: List of notifier configurations.
-    :param notification: Configuration for notifications.
-    :param arming: Configuration for arming the notifier.
+    :var influxdb: InfluxDB configuration object.
+    :var notifiers: List of notifier configurations.
+    :var notification: Configuration for notifications.
+    :var arming: Configuration for arming the notifier.
     """
 
     influxdb: InfluxDBConfiguration
@@ -277,8 +292,7 @@ class Configuration:
 
 
 def load_configuration_from_file(config_file: Path) -> Configuration:
-    """
-    Loads the configuration from a YAML file and returns a Configuration object.
+    """Loads the configuration from a YAML file and returns a Configuration object.
 
     :param file_path: Path to the YAML configuration file.
     :return: Configuration object with InfluxDB and SimplePush settings.
@@ -287,7 +301,7 @@ def load_configuration_from_file(config_file: Path) -> Configuration:
     logger.debug(f"Loading configuration from '{config_file}'...")
 
     try:
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             data = yaml.safe_load(f)
 
         # Validate the configuration against the schema
@@ -295,23 +309,17 @@ def load_configuration_from_file(config_file: Path) -> Configuration:
             jsonschema.validate(instance=data, schema=CONFIGURATION_SCHEMA)
         except jsonschema.ValidationError as e:
             raise ConfigurationError(
-                (
-                    f"Configuration validation error: {e.message}\n"
-                    f"Schema ["
-                    f"{'.'.join(map(str, list(e.schema_path)[1:-1]))}]:\n"
-                    f"{e.schema}\n"
-                    f"Instance:\n{e.instance}"
-                )
+                f"Configuration validation error: {e.message}\n"
+                f"Schema ["
+                f"{'.'.join(map(str, list(e.schema_path)[1:-1]))}]:\n"
+                f"{e.schema}\n"
+                f"Instance:\n{e.instance}"
             ) from e
 
         # Parse the measurements
         measurements = MeasurementsConfiguration(
-            indoor=MeasurementConfiguration(
-                **data["influxdb"]["measurements"]["indoor"]
-            ),
-            outdoor=MeasurementConfiguration(
-                **data["influxdb"]["measurements"]["outdoor"]
-            ),
+            indoor=MeasurementConfiguration(**data["influxdb"]["measurements"]["indoor"]),
+            outdoor=MeasurementConfiguration(**data["influxdb"]["measurements"]["outdoor"]),
         )
 
         # Parse notifiers
@@ -333,15 +341,12 @@ def load_configuration_from_file(config_file: Path) -> Configuration:
             rapid_change_event=RapidChangeEventConfiguration(
                 rise=data["notification"]["rapid_change_event"]["rise"],
                 drop=data["notification"]["rapid_change_event"]["drop"],
-                window_minutes=data["notification"]["rapid_change_event"][
-                    "window_minutes"
-                ],
+                window_minutes=data["notification"]["rapid_change_event"]["window_minutes"],
+                min_peak_temperature=data["notification"]["rapid_change_event"].get("min_peak_temperature"),
             ),
             reenable=ReenableConfiguration(
                 cooldown_minutes=data["notification"]["reenable"]["cooldown_minutes"],
-                min_rise_between_notifications=data["notification"]["reenable"][
-                    "min_rise_between_notifications"
-                ],
+                min_rise_between_notifications=data["notification"]["reenable"]["min_rise_between_notifications"],
             ),
         )
 
@@ -355,14 +360,12 @@ def load_configuration_from_file(config_file: Path) -> Configuration:
                 hours, minutes = map(int, arming_time_str.split(":"))
                 arming_time = time(hour=hours, minute=minutes)
             except Exception as e:
-                raise ConfigurationError(
-                    f"Invalid arming.time format: '{arming_time_str}'. Expected 'HH:MM'."
-                ) from e
+                raise ConfigurationError(f"Invalid arming.time format: '{arming_time_str}'. Expected 'HH:MM'.") from e
         # Parse the arming temperature delta if provided
         arming_temperature_delta = arming_data.get("temperature_delta", None)
 
         # Validate the configuration values
-        if not 1 <= data["influxdb"]["port"] <= 65535:
+        if not 1 <= data["influxdb"]["port"] <= _MAX_PORT:
             raise ConfigurationError("Invalid port number in InfluxDB configuration.")
 
         # Create and return the Configuration object
@@ -378,7 +381,7 @@ def load_configuration_from_file(config_file: Path) -> Configuration:
             notification=notification,
             arming=ArmingConfiguration(
                 temperature_delta=arming_temperature_delta,
-                time=arming_time,
+                arming_time=arming_time,
             ),
         )
     except FileNotFoundError as e:

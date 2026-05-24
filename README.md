@@ -19,7 +19,6 @@ The module requires the following Python dependencies, which are listed in the [
 - `jsonschema`
 - `pyyaml`
 - `simplepush`
-- (add any additional notifier dependencies, e.g., `smtplib` for email)
 
 Install the dependencies using:
 ```sh
@@ -54,6 +53,8 @@ notification:
     rise: 3.0                     # Threshold for a significant temperature rise
     drop: 1.0                     # Threshold for a significant temperature drop
     window_minutes: 90            # Rolling window duration in minutes
+    # min_peak_temperature: 25.0  # Optional: minimum outdoor peak (°C) required to fire the event.
+                                  # Defaults to the current indoor temperature when omitted.
   reenable:                       # Re-enabling notifications settings
     cooldown_minutes: 180         # Cooldown period in minutes before re-enabling notifications
     min_rise_between_notifications: 2.0   # Minimum temperature rise (°C) required between notifications
@@ -78,17 +79,13 @@ arming:
 - **Stale Data Warning:** If one or both sensors have no recent data, a "Sensor Data Warning" notification is sent (at most once per day, and not before the configured `arming.time`). Temperature monitoring is skipped for that run.
 - **Rolling Window Update:** The outdoor temperature is added to a rolling window of length `window_minutes` for trend analysis and rapid change detection.
 - **Indoor Threshold Check:** If the indoor temperature is below `min_indoor_temperature`, no notification is sent.
-- **Arming Logic:** The notifier "arms" itself only if the outdoor temperature is at least `temperature_delta` °C higher than the indoor temperature or after the configured arming time.
-- **Rapid Change Event Detection:** If a significant temperature rise (`rise`) followed by a significant drop (`drop`) is detected within the rolling window, a notification can be sent (unless already notified for this event within the window).
-- **Notification Cooldown and Re-enabling:**
-  - After a notification, a cooldown period (`cooldown_minutes`) must pass before another notification can be sent.
-  - Additionally, there must be a minimum temperature rise (`min_rise_between_notifications`) since the last notification before a new notification is allowed.
-- **Notification Condition:** If the notifier is armed and the outdoor temperature drops below the indoor temperature, a notification is sent via all configured notifiers.
-
-**Note:**  
-- The configuration and logic are designed to avoid spamming notifications and to only alert when meaningful temperature changes occur.
-- The `rapid_change_event` group is for detecting sudden weather changes (e.g., rain cooldowns).
-- The `reenable` group ensures notifications are not sent repeatedly unless there has been a significant warm-up and the cooldown period has passed.
+- **Arming Logic:** The notifier "arms" itself once per day. Both conditions must be met when both are configured: the outdoor temperature must be at least `temperature_delta` °C lower than the indoor temperature, and the current time must be at or after `arming.time`. Once armed the state persists for the rest of the day.
+- **Rapid Change Event Detection:** Targets short-duration weather reversals — typically a fast-moving thunderstorm — that complete within the rolling window (`window_minutes`). If outdoor temperature rose by at least `rise` °C above the indoor temperature and subsequently dropped by at least `drop` °C within the window, the last notification timer is reset immediately so a new alert can fire without waiting for the cooldown. A fluctuation that never exceeded the indoor temperature is ignored because no meaningful "window opportunity was missed." The event is only acted upon once per rolling window.
+- **Notification Cooldown and Re-enabling (slow weather cycles):** Handles cases where outdoor temperature reversed over a period longer than the rolling window (e.g. a slow-building afternoon storm): after the first notification the system waits until both guards are satisfied before sending another alert:
+  - The cooldown period (`cooldown_minutes`) must have elapsed since the last notification.
+  - Outdoor temperature must have risen by at least `min_rise_between_notifications` °C at some point since the last notification, confirming a meaningful warm period occurred.
+  - On a typical monotonically cooling evening neither condition is met, so in practice one notification fires per evening unless the weather reverses.
+- **Notification Condition:** If the notifier is armed and the outdoor temperature is below the indoor temperature, a notification is sent via all configured notifiers.
 
 
 ## Usage

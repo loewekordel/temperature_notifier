@@ -1,6 +1,6 @@
-"""
-InfluxDBService module.
-This module provides a service to interact with InfluxDB.
+"""InfluxDBService module.
+
+Provides a service to interact with InfluxDB.
 """
 
 import logging
@@ -21,14 +21,11 @@ class InfluxDBService:
     """Service to interact with InfluxDB."""
 
     def __init__(self, host: str, port: int) -> None:
-        """
-        Initializes the InfluxDB client and connects to the specified database.
-        """
+        """Initialize the InfluxDB client and connect to the specified host/port."""
         self.client = InfluxDBClient(host=host, port=port)
 
     def switch_database(self, database: str) -> None:
-        """
-        Switches to the specified database.
+        """Switches to the specified database.
 
         :param database: The name of the database to switch to.
         """
@@ -37,8 +34,7 @@ class InfluxDBService:
     def get_last_value(
         self, measurement: MeasurementConfiguration, max_age_minutes: int | None = None
     ) -> float | None:
-        """
-        Queries the last value from a given measurement.
+        """Queries the last value from a given measurement.
 
         :param measurement: The measurement configuration containing the name and field.
         :param max_age_minutes: If set, only returns data newer than this many minutes.
