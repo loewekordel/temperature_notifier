@@ -1,6 +1,6 @@
 """Algorithm for comparing indoor and outdoor temperatures.
 
-Sends notifications based on configured thresholds and conditions.
+Returns a Notification when action is required; returns None otherwise.
 
 Three distinct paths can trigger a notification:
 
@@ -21,7 +21,7 @@ from datetime import datetime
 
 from temperature_notifier.configuration import Configuration
 from temperature_notifier.influxdb_service import InfluxDBService
-from temperature_notifier.notifiers import Notifier
+from temperature_notifier.notifications import Notification, StaleSensorNotification, TemperatureNotification
 from temperature_notifier.rolling_window import TemperatureTrend
 from temperature_notifier.state_manager import StateManager
 
@@ -77,76 +77,65 @@ def _should_arm(
 def _handle_stale_sensors(
     state_manager: StateManager,
     config: Configuration,
-    notifiers: list[Notifier],
     current_datetime: datetime,
     stale_msg: str,
-) -> None:
-    """Notify about stale/missing sensor data if not already done today.
+) -> StaleSensorNotification | None:
+    """Return a stale-sensor notification if one should be sent, otherwise None.
 
     :param state_manager: State manager instance.
     :param config: Configuration instance.
-    :param notifiers: List of notifier instances.
     :param current_datetime: Current datetime.
     :param stale_msg: Comma-separated list of stale sensor names.
+    :return: A StaleSensorNotification if a warning should be sent, None otherwise.
     """
     max_age = config.influxdb.max_data_age_minutes
     logger.warning(f"Stale or missing data for sensors: {stale_msg}")
 
     if state_manager.is_stale_warning_sent_today(current_datetime):
         logger.info("Stale data warning already sent today, skipping notification.")
-        return
+        return None
 
-    if config.arming.arming_time is not None and current_datetime.time() < config.arming.arming_time:
+    if current_datetime.time() < config.arming.arming_time:
         logger.info(
             f"Stale data detected but before arming time ({config.arming.arming_time.strftime('%H:%M')}), "
             "skipping notification."
         )
-        return
+        return None
 
-    logger.info("Sending stale data warning notification.")
-    for notifier in notifiers:
-        notifier.send_notification(
-            "Sensor Data Warning",
-            f"No recent data (>{max_age} min) for sensor(s): {stale_msg}. Temperature monitoring paused.",
-        )
+    logger.info("Preparing stale data warning notification.")
     state_manager.state.last_stale_warning_time = current_datetime
     state_manager.save_state()
+    return StaleSensorNotification(sensors=stale_msg, max_age_minutes=max_age)
 
 
-def _send_temperature_alert(
-    notifiers: list[Notifier],
+def _create_temperature_notification(
     state_manager: StateManager,
     current_datetime: datetime,
     indoor_temp: float,
     outdoor_temp: float,
-) -> None:
-    """Send temperature alert to all notifiers and update state.
+) -> TemperatureNotification:
+    """Update notification state and return a temperature notification.
 
-    :param notifiers: List of notifier instances.
     :param state_manager: State manager instance.
     :param current_datetime: Current datetime.
     :param indoor_temp: Current indoor temperature.
     :param outdoor_temp: Current outdoor temperature.
+    :return: A TemperatureNotification.
     """
-    logger.info("Outdoor temperature is lower than indoor temperature. Sending notification.")
-    for notifier in notifiers:
-        notifier.send_notification(
-            "Temperature Alert",
-            f"Outdoor temperature is lower than indoor temperature! {outdoor_temp}°C < {indoor_temp}°C",
-        )
+    logger.info("Outdoor temperature is lower than indoor temperature. Preparing notification.")
     state_manager.state.last_notification_time = current_datetime
     state_manager.state.temps_since_last_notification.clear()
     state_manager.save_state()
+    return TemperatureNotification(indoor_temp=indoor_temp, outdoor_temp=outdoor_temp)
 
 
 def _handle_initial_cooling(
     state_manager: StateManager,
     config: Configuration,
-    notifiers: list[Notifier],
     current_datetime: datetime,
     indoor_temp: float,
     outdoor_temp: float,
-) -> None:
+) -> Notification | None:
     """Notification path 1: first notification of the day.
 
     Uses the rolling window trend to distinguish a genuine cooling event from a brief dip
@@ -159,10 +148,10 @@ def _handle_initial_cooling(
 
     :param state_manager: State manager instance.
     :param config: Configuration instance.
-    :param notifiers: List of notifier instances.
     :param current_datetime: Current datetime.
     :param indoor_temp: Current indoor temperature.
     :param outdoor_temp: Current outdoor temperature.
+    :return: A TemperatureNotification if conditions are met, None otherwise.
     """
     logger.info("No notification sent today — checking initial cooling conditions...")
     trend = state_manager.state.rolling_window.temperature_trend()
@@ -170,10 +159,9 @@ def _handle_initial_cooling(
     if trend == TemperatureTrend.COOLING:
         logger.info(f"Outdoor trend: {trend.value}. Notifying if outdoor < indoor.")
         if outdoor_temp < indoor_temp:
-            _send_temperature_alert(notifiers, state_manager, current_datetime, indoor_temp, outdoor_temp)
-        else:
-            logger.info("Outdoor is not yet below indoor. No notification sent.")
-        return
+            return _create_temperature_notification(state_manager, current_datetime, indoor_temp, outdoor_temp)
+        logger.info("Outdoor is not yet below indoor. No notification sent.")
+        return None
 
     min_diff = config.notification.min_temperature_difference
     if trend == TemperatureTrend.UNKNOWN:
@@ -182,15 +170,16 @@ def _handle_initial_cooling(
         logger.info(f"Outdoor trend: {trend.value}. Requiring delta >= {min_diff}°C.")
 
     if indoor_temp - outdoor_temp >= min_diff:
-        _send_temperature_alert(notifiers, state_manager, current_datetime, indoor_temp, outdoor_temp)
-    else:
-        logger.info(
-            f"Outdoor is not {min_diff}°C below indoor "
-            f"(delta={indoor_temp - outdoor_temp:.2f}°C). No notification sent."
-        )
+        return _create_temperature_notification(state_manager, current_datetime, indoor_temp, outdoor_temp)
+
+    logger.info(
+        f"Outdoor is not {min_diff}°C below indoor "
+        f"(delta={indoor_temp - outdoor_temp:.2f}°C). No notification sent."
+    )
+    return None
 
 
-def _is_notification_reset_by_rapid_change(
+def _handle_rapid_change_renotification(
     state_manager: StateManager,
     config: Configuration,
     current_datetime: datetime,
@@ -241,11 +230,10 @@ def _is_notification_reset_by_rapid_change(
 def _handle_slow_cycle_renotification(
     state_manager: StateManager,
     config: Configuration,
-    notifiers: list[Notifier],
     current_datetime: datetime,
     indoor_temp: float,
     outdoor_temp: float,
-) -> None:
+) -> Notification | None:
     """Notification path 3: slow cycle re-notification.
 
     Handles two cases that share the same final send step:
@@ -258,40 +246,39 @@ def _handle_slow_cycle_renotification(
 
     :param state_manager: State manager instance.
     :param config: Configuration instance.
-    :param notifiers: List of notifier instances.
     :param current_datetime: Current datetime.
     :param indoor_temp: Current indoor temperature.
     :param outdoor_temp: Current outdoor temperature.
+    :return: A TemperatureNotification if conditions are met, None otherwise.
     """
     if state_manager.state.last_notification_time is not None:
         logger.info("Checking slow-cycle re-notification conditions...")
         if state_manager.is_notification_in_cooldown(current_datetime, config.notification.reenable.cooldown_minutes):
             logger.info("Notification is in cooldown period. No notification sent.")
-            return
+            return None
         min_rise = config.notification.reenable.min_rise_between_notifications
         if not state_manager.has_min_rise_since_last_notification(min_rise):
             logger.info(f"Insufficient temperature rise ({min_rise}°C) since last notification. No notification sent.")
-            return
+            return None
 
     logger.info("Comparing outdoor and indoor temperatures...")
     if outdoor_temp < indoor_temp:
-        _send_temperature_alert(notifiers, state_manager, current_datetime, indoor_temp, outdoor_temp)
+        return _create_temperature_notification(state_manager, current_datetime, indoor_temp, outdoor_temp)
+    return None
 
 
 def compare_temperatures(
     config: Configuration,
     influxdb_service: InfluxDBService,
     state_manager: StateManager,
-    notifiers: list[Notifier],
-) -> None:
-    """Compare temperatures and send a notification when outdoor < indoor.
+) -> Notification | None:
+    """Compare temperatures and return a notification when action is required.
 
     :param config: The configuration instance.
     :param influxdb_service: The InfluxDB service instance to fetch temperature data.
     :param state_manager: The state manager instance to manage the notifier state.
-    :param notifiers: List of notifier instances to send notifications.
+    :return: A Notification if one should be sent, None otherwise.
     :raises InfluxDBServiceError: If there is an error fetching temperature data from InfluxDB.
-    :raises NotifierError: If there is an error sending notifications.
     :raises StateManagerError: If there is an error managing the state.
     """
     current_datetime = datetime.now()
@@ -308,8 +295,7 @@ def compare_temperatures(
             stale_sensors.append(f"indoor ({config.influxdb.measurements.indoor.name})")
         if outdoor_temp is None:
             stale_sensors.append(f"outdoor ({config.influxdb.measurements.outdoor.name})")
-        _handle_stale_sensors(state_manager, config, notifiers, current_datetime, ", ".join(stale_sensors))
-        return
+        return _handle_stale_sensors(state_manager, config, current_datetime, ", ".join(stale_sensors))
 
     logger.info(f"Indoor temperature: {indoor_temp}°C, Outdoor temperature: {outdoor_temp}°C")
 
@@ -324,7 +310,7 @@ def compare_temperatures(
             f"Indoor temperature ({indoor_temp}°C) is below the threshold "
             f"({config.notification.min_indoor_temperature}°C). No notification sent."
         )
-        return
+        return None
     logger.info(
         f"Indoor temperature ({indoor_temp}°C) is above the threshold "
         f"({config.notification.min_indoor_temperature}°C). Proceeding with notification checks."
@@ -337,16 +323,15 @@ def compare_temperatures(
 
     if not state_manager.is_armed():
         logger.info("Notifier is not armed. No notification sent.")
-        return
+        return None
 
     # Path 1 — initial cooling: first notification of the day
     if state_manager.state.last_notification_time is None:
-        _handle_initial_cooling(state_manager, config, notifiers, current_datetime, indoor_temp, outdoor_temp)
-        return
+        return _handle_initial_cooling(state_manager, config, current_datetime, indoor_temp, outdoor_temp)
 
     # Path 2 — rapid change event: short-duration weather reversal within rolling window
-    if _is_notification_reset_by_rapid_change(state_manager, config, current_datetime, indoor_temp):
-        return
+    if _handle_rapid_change_renotification(state_manager, config, current_datetime, indoor_temp):
+        return None
 
     # Path 3 — slow cycle / post-rapid-change send
-    _handle_slow_cycle_renotification(state_manager, config, notifiers, current_datetime, indoor_temp, outdoor_temp)
+    return _handle_slow_cycle_renotification(state_manager, config, current_datetime, indoor_temp, outdoor_temp)

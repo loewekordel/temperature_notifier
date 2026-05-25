@@ -117,13 +117,15 @@ def main(args: Sequence[str] | None = None) -> int:
         # Initialize the Notifier
         notifiers: list[Notifier] = [cfg.create_notifier() for cfg in config.notifiers]
 
-        # Perform the temperature comparison
-        compare_temperatures(
+        # Perform the temperature comparison and send any resulting notification
+        notification = compare_temperatures(
             config=config,
             influxdb_service=influxdb_service,
             state_manager=state_manager,
-            notifiers=notifiers,
         )
+        if notification is not None:
+            for notifier in notifiers:
+                notifier.send(notification)
     except (ConfigurationError, InfluxDBServiceError, NotifierError, StateManagerError) as e:
         logger.error(str(e))
         return 1
