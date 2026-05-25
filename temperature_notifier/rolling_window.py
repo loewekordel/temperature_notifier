@@ -5,11 +5,20 @@ import logging
 from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Self
 
 logger = logging.getLogger(__name__)
 
 _MIN_WINDOW_ENTRIES = 3
+
+
+class TemperatureTrend(Enum):
+    """Direction of the outdoor temperature trend over recent rolling window entries."""
+
+    COOLING = "cooling"
+    WARMING = "warming"
+    UNKNOWN = "unknown"
 
 
 @dataclass
@@ -113,7 +122,22 @@ class RollingWindow:
 
         return rise >= rise_threshold and drop >= drop_threshold
 
-    def is_within_window(self, timestamp: datetime) -> bool:
+    def temperature_trend(self, num_entries: int = 3) -> TemperatureTrend:
+        """Determine the outdoor temperature trend over the last num_entries readings.
+
+        Compares the most recent entry against the entry num_entries positions back.
+        Returns UNKNOWN when not enough entries exist to determine a trend.
+
+        :param num_entries: Number of recent entries to span the trend check.
+        :return: COOLING, WARMING, or UNKNOWN.
+        """
+        if len(self.entries) < num_entries:
+            return TemperatureTrend.UNKNOWN
+        if self.entries[-1].temperature < self.entries[-num_entries].temperature:
+            return TemperatureTrend.COOLING
+        return TemperatureTrend.WARMING
+
+    def is_timestamp_within_window(self, timestamp: datetime) -> bool:
         """Check if a given timestamp is within the time span of the rolling window.
 
         :param timestamp: The timestamp to check.

@@ -8,7 +8,7 @@ from datetime import time
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from temperature_notifier.notifiers import Notifier, SimplePushNotifier
 
@@ -72,6 +72,7 @@ class NotificationConfiguration(BaseModel):
     """Notification thresholds and re-enable settings."""
 
     min_indoor_temperature: float
+    min_temperature_difference: float = Field(ge=0)
     rapid_change_event: RapidChangeEventConfiguration
     reenable: ReenableConfiguration
 
@@ -79,27 +80,19 @@ class NotificationConfiguration(BaseModel):
 class ArmingConfiguration(BaseModel):
     """Conditions that must be met before the notifier arms itself."""
 
-    temperature_delta: float | None = None
-    arming_time: time | None = Field(default=None, alias="time")
+    arming_time: time = Field(alias="time")
 
     @field_validator("arming_time", mode="before")
     @classmethod
-    def parse_time(cls, v: str | time | None) -> time | None:
+    def parse_time(cls, v: str | time) -> time:
         """Parse an 'HH:MM' string into a time object."""
-        if v is None or isinstance(v, time):
+        if isinstance(v, time):
             return v
         try:
             hours, minutes = map(int, v.split(":"))
             return time(hour=hours, minute=minutes)
         except Exception as e:
             raise ValueError(f"Invalid time format '{v}'. Expected 'HH:MM'.") from e
-
-    @model_validator(mode="after")
-    def at_least_one_arming_condition(self) -> "ArmingConfiguration":
-        """Require at least one of temperature_delta or arming_time to be set."""
-        if self.temperature_delta is None and self.arming_time is None:
-            raise ValueError("At least one of 'temperature_delta' or 'time' must be set in arming configuration.")
-        return self
 
 
 class Configuration(BaseModel):

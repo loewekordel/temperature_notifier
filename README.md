@@ -49,6 +49,7 @@ notifiers:
 
 notification:
   min_indoor_temperature: 21.5    # Indoor temperature threshold in Celsius
+  min_temperature_difference: 0.5 # Minimum indoor-outdoor delta (°C) when outdoor is warming or trend is unknown
   rapid_change_event:             # Rapid temperature change event settings
     rise: 3.0                     # Threshold for a significant temperature rise
     drop: 1.0                     # Threshold for a significant temperature drop
@@ -60,7 +61,6 @@ notification:
     min_rise_between_notifications: 2.0   # Minimum temperature rise (°C) required between notifications
 
 arming:
-  temperature_delta: 2.0          # Temperature delta for arming in Celsius
   time: "08:00"                   # Time for arming [hh:mm]
 ```
 
@@ -79,13 +79,14 @@ arming:
 - **Stale Data Warning:** If one or both sensors have no recent data, a "Sensor Data Warning" notification is sent (at most once per day, and not before the configured `arming.time`). Temperature monitoring is skipped for that run.
 - **Rolling Window Update:** The outdoor temperature is added to a rolling window of length `window_minutes` for trend analysis and rapid change detection.
 - **Indoor Threshold Check:** If the indoor temperature is below `min_indoor_temperature`, no notification is sent.
-- **Arming Logic:** The notifier "arms" itself once per day. Both conditions must be met when both are configured: the outdoor temperature must be at least `temperature_delta` °C lower than the indoor temperature, and the current time must be at or after `arming.time`. Once armed the state persists for the rest of the day.
+- **Arming Logic:** The notifier arms itself once per day as soon as the current time reaches `arming.time`. Once armed the state persists for the rest of the day.
 - **Rapid Change Event Detection:** Targets short-duration weather reversals — typically a fast-moving thunderstorm — that complete within the rolling window (`window_minutes`). If outdoor temperature rose by at least `rise` °C above the indoor temperature and subsequently dropped by at least `drop` °C within the window, the last notification timer is reset immediately so a new alert can fire without waiting for the cooldown. A fluctuation that never exceeded the indoor temperature is ignored because no meaningful "window opportunity was missed." The event is only acted upon once per rolling window.
 - **Notification Cooldown and Re-enabling (slow weather cycles):** Handles cases where outdoor temperature reversed over a period longer than the rolling window (e.g. a slow-building afternoon storm): after the first notification the system waits until both guards are satisfied before sending another alert:
   - The cooldown period (`cooldown_minutes`) must have elapsed since the last notification.
   - Outdoor temperature must have risen by at least `min_rise_between_notifications` °C at some point since the last notification, confirming a meaningful warm period occurred.
   - On a typical monotonically cooling evening neither condition is met, so in practice one notification fires per evening unless the weather reverses.
-- **Notification Condition:** If the notifier is armed and the outdoor temperature is below the indoor temperature, a notification is sent via all configured notifiers.
+- **First Notification:** Once armed, a trend check is applied to avoid spurious alerts when outdoor temperature is rising and only briefly dips below indoor (e.g. early morning). If outdoor is trending down, any outdoor < indoor qualifies. If outdoor is warming or the trend cannot yet be determined, a minimum delta of `min_temperature_difference` °C is required.
+- **Re-notification:** See Rapid Change Event and Notification Cooldown above. The trend check is not applied — the upstream guards already confirm conditions are meaningful. A notification is sent whenever outdoor < indoor.
 
 
 ## Usage

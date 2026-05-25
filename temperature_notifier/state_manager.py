@@ -223,7 +223,7 @@ class StateManager:
             logger.debug("No last significant rise time set, cannot check rolling window.")
             return False
 
-        return self.state.rolling_window.is_within_window(
+        return self.state.rolling_window.is_timestamp_within_window(
             self.state.last_significant_rise_time
         )
 
