@@ -1,28 +1,13 @@
-"""Notifier classes for sending push notifications."""
+"""SimplePush notifier implementation."""
 
 import logging
-from abc import ABC, abstractmethod
 
 from simplepush import send as send_simplepush
 
 from temperature_notifier.notifications import Notification, StaleSensorNotification, TemperatureNotification
+from temperature_notifier.notifiers.base import Notifier, NotifierError
 
 logger = logging.getLogger(__name__)
-
-
-class NotifierError(Exception):
-    """Custom exception for Notifier errors."""
-
-
-class Notifier(ABC):
-    """Abstract base class for sending notifications."""
-
-    @abstractmethod
-    def send(self, notification: Notification) -> None:
-        """Send a notification.
-
-        :param notification: The notification to send.
-        """
 
 
 class SimplePushNotifier(Notifier):

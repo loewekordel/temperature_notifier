@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from .rolling_window import RollingWindow
+from .rolling_window import RollingWindow, TemperatureTrend
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +236,58 @@ class StateManager:
         if self.state.last_stale_warning_time is None:
             return False
         return self.state.last_stale_warning_time.date() == current_datetime.date()
+
+    def set_last_run_date(self, current_date: date) -> None:
+        """Set the last run date.
+
+        :param current_date: The date to record as the last run date.
+        """
+        self.state.last_run_date = current_date
+
+    def record_outdoor_temperature(self, current_datetime: datetime, outdoor_temp: float) -> None:
+        """Append an outdoor temperature reading to the rolling window and temps buffer.
+
+        :param current_datetime: Timestamp of the reading.
+        :param outdoor_temp: Outdoor temperature in °C.
+        """
+        self.state.rolling_window.append(current_datetime, outdoor_temp)
+        self.state.temps_since_last_notification.append(outdoor_temp)
+
+    def outdoor_temperature_trend(self) -> TemperatureTrend:
+        """Return the current outdoor temperature trend from the rolling window.
+
+        :return: COOLING, WARMING, or UNKNOWN.
+        """
+        return self.state.rolling_window.temperature_trend()
+
+    def has_previous_notification(self) -> bool:
+        """Check if a temperature notification has been sent today.
+
+        :return: True if a notification has been sent, False otherwise.
+        """
+        return self.state.last_notification_time is not None
+
+    def record_notification_sent(self, current_datetime: datetime) -> None:
+        """Record that a temperature notification was sent.
+
+        :param current_datetime: The datetime when the notification was sent.
+        """
+        self.state.last_notification_time = current_datetime
+        self.state.temps_since_last_notification.clear()
+
+    def record_stale_warning_sent(self, current_datetime: datetime) -> None:
+        """Record that a stale-data warning notification was sent.
+
+        :param current_datetime: The datetime when the warning was sent.
+        """
+        self.state.last_stale_warning_time = current_datetime
+
+    def record_significant_rise(self, current_datetime: datetime) -> None:
+        """Record the time of a significant outdoor temperature rise event.
+
+        :param current_datetime: The datetime of the significant rise.
+        """
+        self.state.last_significant_rise_time = current_datetime
 
     def has_min_rise_since_last_notification(self, min_rise: float) -> bool:
         """Check if there has been a minimum temperature rise since the last notification.

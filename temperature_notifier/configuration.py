@@ -6,11 +6,10 @@ Defines the configuration models and the function to load configuration from a Y
 import logging
 from datetime import time
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
-
-from temperature_notifier.notifiers import Notifier, SimplePushNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +43,8 @@ class InfluxDBConfiguration(BaseModel):
 class SimplePushConfiguration(BaseModel):
     """Configuration for the SimplePush notifier."""
 
-    type: str
+    type: Literal["simplepush"]
     key: str
-
-    def create_notifier(self) -> Notifier:
-        """Create a SimplePushNotifier from this configuration."""
-        return SimplePushNotifier(key=self.key)
 
 
 class RapidChangeEventConfiguration(BaseModel):

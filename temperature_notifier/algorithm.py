@@ -20,8 +20,8 @@ import logging
 from datetime import datetime
 
 from temperature_notifier.configuration import Configuration
-from temperature_notifier.influxdb_service import InfluxDBService
 from temperature_notifier.notifications import Notification, StaleSensorNotification, TemperatureNotification
+from temperature_notifier.providers import TemperatureSource
 from temperature_notifier.rolling_window import TemperatureTrend
 from temperature_notifier.state_manager import StateManager
 
@@ -40,7 +40,7 @@ def _reset_daily_state_if_new_day(state_manager: StateManager, current_datetime:
         state_manager.reset_daily_state()
     else:
         logger.info("No new day detected. Continuing with current state.")
-    state_manager.state.last_run_date = current_datetime.date()
+    state_manager.set_last_run_date(current_datetime.date())
     state_manager.save_state()
 
 
@@ -103,7 +103,7 @@ def _handle_stale_sensors(
         return None
 
     logger.info("Preparing stale data warning notification.")
-    state_manager.state.last_stale_warning_time = current_datetime
+    state_manager.record_stale_warning_sent(current_datetime)
     state_manager.save_state()
     return StaleSensorNotification(sensors=stale_msg, max_age_minutes=max_age)
 
@@ -123,8 +123,7 @@ def _create_temperature_notification(
     :return: A TemperatureNotification.
     """
     logger.info("Outdoor temperature is lower than indoor temperature. Preparing notification.")
-    state_manager.state.last_notification_time = current_datetime
-    state_manager.state.temps_since_last_notification.clear()
+    state_manager.record_notification_sent(current_datetime)
     state_manager.save_state()
     return TemperatureNotification(indoor_temp=indoor_temp, outdoor_temp=outdoor_temp)
 
@@ -154,7 +153,7 @@ def _handle_initial_cooling(
     :return: A TemperatureNotification if conditions are met, None otherwise.
     """
     logger.info("No notification sent today — checking initial cooling conditions...")
-    trend = state_manager.state.rolling_window.temperature_trend()
+    trend = state_manager.outdoor_temperature_trend()
 
     if trend == TemperatureTrend.COOLING:
         logger.info(f"Outdoor trend: {trend.value}. Notifying if outdoor < indoor.")
@@ -221,7 +220,7 @@ def _handle_rapid_change_renotification(
         return True
 
     logger.info("Rapid change event detected. Resetting last notification time.")
-    state_manager.state.last_significant_rise_time = current_datetime
+    state_manager.record_significant_rise(current_datetime)
     state_manager.reset_notification_time()
     state_manager.save_state()
     return False
@@ -251,7 +250,7 @@ def _handle_slow_cycle_renotification(
     :param outdoor_temp: Current outdoor temperature.
     :return: A TemperatureNotification if conditions are met, None otherwise.
     """
-    if state_manager.state.last_notification_time is not None:
+    if state_manager.has_previous_notification():
         logger.info("Checking slow-cycle re-notification conditions...")
         if state_manager.is_notification_in_cooldown(current_datetime, config.notification.reenable.cooldown_minutes):
             logger.info("Notification is in cooldown period. No notification sent.")
@@ -269,13 +268,13 @@ def _handle_slow_cycle_renotification(
 
 def compare_temperatures(
     config: Configuration,
-    influxdb_service: InfluxDBService,
+    temperature_source: TemperatureSource,
     state_manager: StateManager,
 ) -> Notification | None:
     """Compare temperatures and return a notification when action is required.
 
     :param config: The configuration instance.
-    :param influxdb_service: The InfluxDB service instance to fetch temperature data.
+    :param temperature_source: The temperature data source.
     :param state_manager: The state manager instance to manage the notifier state.
     :return: A Notification if one should be sent, None otherwise.
     :raises InfluxDBServiceError: If there is an error fetching temperature data from InfluxDB.
@@ -286,8 +285,16 @@ def compare_temperatures(
 
     logger.info("Fetching indoor and outdoor temperatures from InfluxDB...")
     max_age = config.influxdb.max_data_age_minutes
-    indoor_temp = influxdb_service.get_last_value(config.influxdb.measurements.indoor, max_age_minutes=max_age)
-    outdoor_temp = influxdb_service.get_last_value(config.influxdb.measurements.outdoor, max_age_minutes=max_age)
+    indoor_temp = temperature_source.get_last_value(
+        config.influxdb.measurements.indoor.name,
+        config.influxdb.measurements.indoor.field,
+        max_age_minutes=max_age,
+    )
+    outdoor_temp = temperature_source.get_last_value(
+        config.influxdb.measurements.outdoor.name,
+        config.influxdb.measurements.outdoor.field,
+        max_age_minutes=max_age,
+    )
 
     if indoor_temp is None or outdoor_temp is None:
         stale_sensors = []
@@ -300,8 +307,7 @@ def compare_temperatures(
     logger.info(f"Indoor temperature: {indoor_temp}°C, Outdoor temperature: {outdoor_temp}°C")
 
     logger.debug("Updating rolling window and temps since last notification...")
-    state_manager.state.rolling_window.append(current_datetime, outdoor_temp)
-    state_manager.state.temps_since_last_notification.append(outdoor_temp)
+    state_manager.record_outdoor_temperature(current_datetime, outdoor_temp)
     state_manager.save_state()
 
     logger.info("Checking if indoor temperature is below the threshold...")
@@ -326,7 +332,7 @@ def compare_temperatures(
         return None
 
     # Path 1 — initial cooling: first notification of the day
-    if state_manager.state.last_notification_time is None:
+    if not state_manager.has_previous_notification():
         return _handle_initial_cooling(state_manager, config, current_datetime, indoor_temp, outdoor_temp)
 
     # Path 2 — rapid change event: short-duration weather reversal within rolling window

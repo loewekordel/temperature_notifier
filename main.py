@@ -12,8 +12,8 @@ from pathlib import Path
 
 from temperature_notifier.algorithm import compare_temperatures
 from temperature_notifier.configuration import Configuration, ConfigurationError, load_configuration_from_file
-from temperature_notifier.influxdb_service import InfluxDBService, InfluxDBServiceError
-from temperature_notifier.notifiers import Notifier, NotifierError
+from temperature_notifier.notifiers import Notifier, NotifierError, create_notifiers
+from temperature_notifier.providers.influxdb import InfluxDBService, InfluxDBServiceError
 from temperature_notifier.state_manager import StateManager, StateManagerError
 
 try:
@@ -114,13 +114,13 @@ def main(args: Sequence[str] | None = None) -> int:
             rolling_window_minutes=config.notification.rapid_change_event.window_minutes,
         )
 
-        # Initialize the Notifier
-        notifiers: list[Notifier] = [cfg.create_notifier() for cfg in config.notifiers]
+        # Initialize notifiers
+        notifiers: list[Notifier] = create_notifiers(config)
 
         # Perform the temperature comparison and send any resulting notification
         notification = compare_temperatures(
             config=config,
-            influxdb_service=influxdb_service,
+            temperature_source=influxdb_service,
             state_manager=state_manager,
         )
         if notification is not None:
