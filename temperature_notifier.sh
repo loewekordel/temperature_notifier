@@ -1,3 +1,3 @@
 #!/bin/bash
 cd /home/jarvis/scripts/temperature_notifier
-uv run python main.py "$@"
+/home/jarvis/.local/bin/uv run python main.py "$@"
