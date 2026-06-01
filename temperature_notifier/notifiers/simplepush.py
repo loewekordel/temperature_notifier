@@ -2,7 +2,13 @@
 
 import logging
 
-from simplepush import send as send_simplepush
+import requests
+from simplepush import (
+    BadRequest,
+    RateLimitExceeded,
+    UnknownError,
+    send as send_simplepush,
+)
 
 from temperature_notifier.notifications import Notification, StaleSensorNotification, TemperatureNotification
 from temperature_notifier.notifiers.base import Notifier, NotifierError
@@ -45,5 +51,15 @@ class SimplePushNotifier(Notifier):
             logger.info("Notification sent successfully.")
         except NotifierError:
             raise
+        except RateLimitExceeded:
+            raise NotifierError("SimplePush rate limit exceeded") from None
+        except BadRequest:
+            raise NotifierError("SimplePush rejected the message (title or message too long)") from None
+        except UnknownError:
+            raise NotifierError("SimplePush returned an unexpected status") from None
+        except ValueError as e:
+            raise NotifierError(f"SimplePush returned a non-JSON response: {e}") from e
+        except requests.RequestException as e:
+            raise NotifierError(f"Network error sending SimplePush notification: {e}") from e
         except Exception as e:
             raise NotifierError(f"Failed to send notification: {e}") from e
