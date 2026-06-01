@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from temperature_notifier.algorithm import compare_temperatures
+from temperature_notifier.algorithm import commit_notification_sent, compare_temperatures
 from temperature_notifier.configuration import Configuration, ConfigurationError, load_configuration_from_file
 from temperature_notifier.notifiers import Notifier, NotifierError, create_notifiers
 from temperature_notifier.providers.influxdb import InfluxDBService, InfluxDBServiceError
@@ -126,6 +126,7 @@ def main(args: Sequence[str] | None = None) -> int:
         if notification is not None:
             for notifier in notifiers:
                 notifier.send(notification)
+            commit_notification_sent(state_manager, notification)
     except (ConfigurationError, InfluxDBServiceError, NotifierError, StateManagerError) as e:
         logger.error(str(e))
         return 1

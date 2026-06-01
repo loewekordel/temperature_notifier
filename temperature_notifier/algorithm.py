@@ -103,35 +103,47 @@ def _handle_stale_sensors(
         return None
 
     logger.info("Preparing stale data warning notification.")
-    state_manager.record_stale_warning_sent(current_datetime)
-    state_manager.save_state()
     return StaleSensorNotification(sensors=stale_msg, max_age_minutes=max_age)
 
 
 def _create_temperature_notification(
-    state_manager: StateManager,
-    current_datetime: datetime,
     indoor_temp: float,
     outdoor_temp: float,
 ) -> TemperatureNotification:
-    """Update notification state and return a temperature notification.
+    """Return a temperature notification without updating state.
 
-    :param state_manager: State manager instance.
-    :param current_datetime: Current datetime.
+    State is committed by the caller only after the notification is successfully sent.
+
     :param indoor_temp: Current indoor temperature.
     :param outdoor_temp: Current outdoor temperature.
     :return: A TemperatureNotification.
     """
     logger.info("Outdoor temperature is lower than indoor temperature. Preparing notification.")
-    state_manager.record_notification_sent(current_datetime)
-    state_manager.save_state()
     return TemperatureNotification(indoor_temp=indoor_temp, outdoor_temp=outdoor_temp)
+
+
+def commit_notification_sent(
+    state_manager: StateManager,
+    notification: Notification,
+) -> None:
+    """Update and persist state after a notification has been successfully delivered.
+
+    Must be called by the caller only after all notifiers have confirmed success.
+
+    :param state_manager: State manager instance.
+    :param notification: The notification that was sent.
+    """
+    sent_at = datetime.now()
+    if isinstance(notification, TemperatureNotification):
+        state_manager.record_notification_sent(sent_at)
+    elif isinstance(notification, StaleSensorNotification):
+        state_manager.record_stale_warning_sent(sent_at)
+    state_manager.save_state()
 
 
 def _handle_initial_cooling(
     state_manager: StateManager,
     config: Configuration,
-    current_datetime: datetime,
     indoor_temp: float,
     outdoor_temp: float,
 ) -> Notification | None:
@@ -147,7 +159,6 @@ def _handle_initial_cooling(
 
     :param state_manager: State manager instance.
     :param config: Configuration instance.
-    :param current_datetime: Current datetime.
     :param indoor_temp: Current indoor temperature.
     :param outdoor_temp: Current outdoor temperature.
     :return: A TemperatureNotification if conditions are met, None otherwise.
@@ -158,7 +169,7 @@ def _handle_initial_cooling(
     if trend == TemperatureTrend.COOLING:
         logger.info(f"Outdoor trend: {trend.value}. Notifying if outdoor < indoor.")
         if outdoor_temp < indoor_temp:
-            return _create_temperature_notification(state_manager, current_datetime, indoor_temp, outdoor_temp)
+            return _create_temperature_notification(indoor_temp, outdoor_temp)
         logger.info("Outdoor is not yet below indoor. No notification sent.")
         return None
 
@@ -169,7 +180,7 @@ def _handle_initial_cooling(
         logger.info(f"Outdoor trend: {trend.value}. Requiring delta >= {min_diff}°C.")
 
     if indoor_temp - outdoor_temp >= min_diff:
-        return _create_temperature_notification(state_manager, current_datetime, indoor_temp, outdoor_temp)
+        return _create_temperature_notification(indoor_temp, outdoor_temp)
 
     logger.info(
         f"Outdoor is not {min_diff}°C below indoor "
@@ -262,7 +273,7 @@ def _handle_slow_cycle_renotification(
 
     logger.info("Comparing outdoor and indoor temperatures...")
     if outdoor_temp < indoor_temp:
-        return _create_temperature_notification(state_manager, current_datetime, indoor_temp, outdoor_temp)
+        return _create_temperature_notification(indoor_temp, outdoor_temp)
     return None
 
 
@@ -333,7 +344,7 @@ def compare_temperatures(
 
     # Path 1 — initial cooling: first notification of the day
     if not state_manager.has_previous_notification():
-        return _handle_initial_cooling(state_manager, config, current_datetime, indoor_temp, outdoor_temp)
+        return _handle_initial_cooling(state_manager, config, indoor_temp, outdoor_temp)
 
     # Path 2 — rapid change event: short-duration weather reversal within rolling window
     if _handle_rapid_change_renotification(state_manager, config, current_datetime, indoor_temp):
