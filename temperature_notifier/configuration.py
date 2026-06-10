@@ -6,7 +6,7 @@ Defines the configuration models and the function to load configuration from a Y
 import logging
 from datetime import time
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal, Union
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -45,6 +45,15 @@ class SimplePushConfiguration(BaseModel):
 
     type: Literal["simplepush"]
     key: str
+
+
+class HomeAssistantConfiguration(BaseModel):
+    """Configuration for the Home Assistant notifier."""
+
+    type: Literal["home_assistant"]
+    url: str
+    token: str
+    service: str = "persistent_notification/create"
 
 
 class RapidChangeEventConfiguration(BaseModel):
@@ -94,7 +103,9 @@ class Configuration(BaseModel):
     """Top-level configuration."""
 
     influxdb: InfluxDBConfiguration
-    notifiers: list[SimplePushConfiguration] = Field(min_length=1)
+    notifiers: list[Annotated[SimplePushConfiguration | HomeAssistantConfiguration, Field(discriminator="type")]] = (
+        Field(min_length=1)
+    )
     notification: NotificationConfiguration
     arming: ArmingConfiguration
 

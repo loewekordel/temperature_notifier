@@ -1030,6 +1030,7 @@ dependencies = [
     { name = "influxdb" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "simplepush" },
 ]
 
@@ -1038,6 +1039,7 @@ requires-dist = [
     { name = "influxdb" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "simplepush" },
 ]
 

@@ -1,11 +1,11 @@
 # Temperature Notifier
 
-The `temperature_notifier` module monitors indoor and outdoor temperatures using InfluxDB. It sends notifications via the SimplePush service if the outdoor temperature is lower than the indoor temperature and the indoor temperature exceeds a specified threshold.
+The `temperature_notifier` module monitors indoor and outdoor temperatures using InfluxDB. It sends notifications via one or more configured notifier services (SimplePush, Home Assistant) if the outdoor temperature is lower than the indoor temperature and the indoor temperature exceeds a specified threshold.
 
 ## Features
 
 - Monitors indoor and outdoor temperatures from an InfluxDB database.
-- Sends notifications using one or more notifier services (SimplePush, email, etc.).
+- Sends notifications using one or more notifier services (SimplePush, Home Assistant).
 - Configurable thresholds for temperature alerts, major temperature rises, and arming delta.
 - Detects stale sensor data and sends a once-per-day warning notification when a sensor stops reporting.
 - Logs activity with rotating log files.
@@ -13,16 +13,17 @@ The `temperature_notifier` module monitors indoor and outdoor temperatures using
 
 ## Requirements
 
-The module requires the following Python dependencies, which are listed in the [`requirements.txt`](requirements.txt) file:
+The module requires the following Python dependencies, declared in [`pyproject.toml`](pyproject.toml):
 
 - `influxdb`
-- `jsonschema`
+- `pydantic`
 - `pyyaml`
+- `requests`
 - `simplepush`
 
-Install the dependencies using:
+Install the dependencies using [uv](https://github.com/astral-sh/uv):
 ```sh
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Configuration
@@ -46,6 +47,10 @@ influxdb:
 notifiers:
   - type: simplepush
     key: "YOUR_SIMPLEPUSH_KEY"
+  # - type: home_assistant
+  #   url: "http://localhost:8123"
+  #   token: "YOUR_LONG_LIVED_ACCESS_TOKEN"
+  #   service: "notify/mobile_app_your_phone"  # or "persistent_notification/create"
 
 notification:
   min_indoor_temperature: 21.5    # Indoor temperature threshold in Celsius
@@ -66,9 +71,41 @@ arming:
 
 ### Notifier Selection
 
-- Multiple notifiers can be configured under the `notifiers` list.
-- Each notifier must have a `type` field (e.g., `simplepush`, `email`).
-- Each notifier type has its own configuration fields.
+Multiple notifiers can be configured under the `notifiers` list — all configured notifiers receive every notification. Each notifier must have a `type` field:
+
+| Type | Required fields | Notes |
+|---|---|---|
+| `simplepush` | `key` | Cloud push, works from anywhere |
+| `home_assistant` | `url`, `token` | `service` defaults to `persistent_notification/create` |
+
+For the `home_assistant` notifier, `service` is the HA service path as `domain/service`, e.g.:
+- `notify/mobile_app_my_phone` — companion app push notification
+- `persistent_notification/create` — visible in the HA dashboard sidebar
+
+#### Finding the long-lived access token
+
+1. Open Home Assistant and go to **Settings → Profile** (your user icon, bottom left).
+2. Scroll to the bottom and click **Create Token** under **Long-Lived Access Tokens**.
+3. Give it a name (e.g. `temperature-notifier`) and copy the token — it is only shown once.
+
+#### Finding the phone service name
+
+The service name depends on the device registered via the Home Assistant companion app. Query the HA REST API to list all available `notify` services:
+
+```sh
+curl -s \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  http://localhost:8123/api/services \
+  | python3 -c "
+import json, sys
+for d in json.load(sys.stdin):
+    if d['domain'] == 'notify':
+        for name in d['services']:
+            print('notify/' + name)
+"
+```
+
+Look for a `notify/mobile_app_*` entry matching your phone. Use that value as the `service` field in `config.yaml`.
 
 ## Algorithm Details
 
@@ -93,10 +130,10 @@ arming:
 
 Run the script using the following command:
 ```sh
-python main.py
+uv run python main.py
 ```
 
-Alternatively, you can use the provided shell script to run the notifier (setup virtual environment required):
+Alternatively, you can use the provided shell script:
 
 ```sh
 ./temperature_notifier.sh
@@ -108,7 +145,7 @@ Logs are stored in a file named `temperature_notifier.log` in the same directory
 
 ## Deployment
 
-To run the script periodically, you can use a cron job. For example, to execute the script every hour:
+To run the script periodically, you can use a cron job. For example, to execute the script every 10 minutes:
 
 1. Open the crontab editor:
    ```sh
@@ -127,4 +164,5 @@ This project is licensed under the MIT License. See the [`LICENSE`](LICENSE) fil
 ## Acknowledgments
 
 - InfluxDB for time-series data storage.
-- SimplePush for notification services.
+- SimplePush for push notification services.
+- Home Assistant for home automation and mobile notifications.
